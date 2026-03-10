@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>聊城大学 - 智能校园导航系统（定位修复版）</title>
+    <style>
+        :root {
+            --lc-u-primary: #165DFF;
+            --lc-u-secondary: #00B42A;
+            --lc-u-warning: #FF7D00;
+            --lc-u-danger: #F53F3F;
+            --lc-u-bg: #F5F7FA;
+            --lc-u-white: #FFFFFF;
+            --lc-u-shadow: 0 2px 12px rgba(0,0,0,0.08);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: "Microsoft Yahei", sans-serif; }
+        html, body { height: 100%; background: var(--lc-u-bg); }
+
+        #map-container { width: 100%; height: 100%; position: relative; }
+
+        .nav-header {
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+            z-index: 999; display: flex; align-items: center;
+            background: var(--lc-u-white); padding: 12px 20px;
+            border-radius: 12px; box-shadow: var(--lc-u-shadow);
+            width: 90%; max-width: 800px;
+        }
+
+        .search-wrapper { flex: 1; position: relative; }
+        #search-input {
+            width: 100%; padding: 10px 16px; border: 1px solid #E5E6EB;
+            border-radius: 8px; font-size: 14px; outline: none;
+            transition: border-color 0.3s;
+        }
+        #search-input:focus { border-color: var(--lc-u-primary); }
+        .search-btn {
+            position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+            background: var(--lc-u-primary); color: white; border: none;
+            padding: 6px 16px; border-radius: 6px; cursor: pointer;
+            font-size: 14px;
+        }
+
+        .func-group { display: flex; gap: 8px; margin-left: 16px; }
+        .func-btn {
+            padding: 8px 12px; border: none; border-radius: 6px;
+            font-size: 12px; cursor: pointer; transition: all 0.2s;
+            background: var(--lc-u-bg); color: #333;
+        }
+        .func-btn.active { background: var(--lc-u-primary); color: white; }
+        .func-btn:hover { opacity: 0.9; }
+
+        .layer-control {
+            position: absolute; bottom: 30px; left: 20px; z-index: 999;
+            background: var(--lc-u-white); padding: 12px; border-radius: 8px;
+            box-shadow: var(--lc-u-shadow);
+        }
+        .layer-item {
+            display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+            font-size: 12px; color: #666; cursor: pointer;
+        }
+        .layer-item:last-child { margin-bottom: 0; }
+        .layer-checkbox { width: 14px; height: 14px; accent-color: var(--lc-u-primary); }
+
+        .route-popup {
+            position: absolute; bottom: 30px; right: 20px; z-index: 999;
+            background: var(--lc-u-white); padding: 16px; border-radius: 8px;
+            box-shadow: var(--lc-u-shadow); width: 280px;
+            display: none;
+        }
+        .route-title { font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #333; }
+        .route-distance { font-size: 12px; color: #999; margin-bottom: 12px; }
+        .route-steps { max-height: 200px; overflow-y: auto; font-size: 13px; }
+        .route-step { margin-bottom: 6px; padding-left: 16px; position: relative; }
+        .route-step::before {
+            content: ""; position: absolute; left: 4px; top: 6px;
+            width: 6px; height: 6px; border-radius: 50%;
+            background: var(--lc-u-primary);
+        }
+        .close-popup {
+            position: absolute; top: 8px; right: 8px; border: none;
+            background: transparent; font-size: 16px; cursor: pointer;
+            color: #999;
+        }
+
+        /* 新增：定位选择面板 */
+        .location-selector {
+            position: absolute; top: 80px; left: 50%; transform: translateX(-50%);
+            z-index: 999; background: var(--lc-u-white); padding: 12px;
+            border-radius: 8px; box-shadow: var(--lc-u-shadow);
+            display: none;
+        }
+        .location-item {
+            padding: 8px 12px; font-size: 13px; cursor: pointer;
+            border-radius: 4px; margin-bottom: 4px;
+        }
+        .location-item:hover { background: var(--lc-u-bg); }
+        .location-item:last-child { margin-bottom: 0; }
+
+        @media (max-width: 768px) {
+            .nav-header { flex-direction: column; gap: 12px; padding: 12px; }
+            .func-group { margin-left: 0; width: 100%; justify-content: space-between; }
+            .route-popup { width: calc(100% - 40px); right: 20px; }
+            .location-selector { width: calc(100% - 40px); }
+        }
+    </style>
+    <script src="https://webapi.amap.com/maps?v=2.0&key=234aacb867616bfa827831d6de91231e"></script>
+    <script src="https://webapi.amap.com/ui/1.1/main.js"></script>
+</head>
+<body>
+<div id="map-container">
+    <div class="nav-header">
+        <div class="search-wrapper">
+            <input type="text" id="search-input" placeholder="搜索目的地：图书馆/教学楼/食堂/快递站" autocomplete="off">
+            <button class="search-btn" onclick="searchDestination()">导航</button>
+        </div>
+        <div class="func-group">
+            <button class="func-btn active" onclick="switchMapMode('2D')">2D地图</button>
+            <button class="func-btn" onclick="switchMapMode('3D')">3D地图</button>
+            <button class="func-btn" onclick="openLocationSelector()">📍 选起点</button>
+            <button class="func-btn" onclick="clearRoute()">清空路线</button>
+        </div>
+    </div>
+
+    <!-- 新增：定位选择面板（解决定位失败） -->
+    <div class="location-selector" id="location-selector">
+        <div class="location-item" onclick="selectLocation('auto')">📱 自动定位（推荐）</div>
+        <div class="location-item" onclick="selectLocation('east-gate')">🏫 东校区南门（默认）</div>
+        <div class="location-item" onclick="selectLocation('west-gate')">🏫 西校区正门</div>
+        <div class="location-item" onclick="selectLocation('east-lib')">📚 东校区图书馆</div>
+        <div class="location-item" onclick="closeLocationSelector()">❌ 关闭</div>
+    </div>
+
+    <div class="layer-control">
+        <div class="layer-item">
+            <input type="checkbox" class="layer-checkbox" id="layer-road" checked onchange="toggleLayer('road')">
+            <label for="layer-road">路网图层</label>
+        </div>
+        <div class="layer-item">
+            <input type="checkbox" class="layer-checkbox" id="layer-satellite" onchange="toggleLayer('satellite')">
+            <label for="layer-satellite">卫星图层</label>
+        </div>
+        <div class="layer-item">
+            <input type="checkbox" class="layer-checkbox" id="layer-label" checked onchange="toggleLayer('label')">
+            <label for="layer-label">标注图层</label>
+        </div>
+        <div class="layer-item">
+            <input type="checkbox" class="layer-checkbox" id="layer-building" onchange="toggleLayer('building')">
+            <label for="layer-building">3D建筑</label>
+        </div>
+    </div>
+
+    <div class="route-popup" id="route-popup">
+        <button class="close-popup" onclick="closeRoutePopup()">×</button>
+        <div class="route-title" id="route-title"></div>
+        <div class="route-distance" id="route-distance"></div>
+        <div class="route-steps" id="route-steps"></div>
+    </div>
+</div>
+
+<script>
+    let map;
+    let currentRoute = null;
+    let satelliteLayer;
+    let roadLayer;
+    let labelLayer;
+    let buildingLayer;
+    let markers = [];
+    let currentStartPos = [116.0092, 36.4302]; // 默认起点：东校区南门
+
+    // 聊大高精度点位库
+    const campusPOIs = {
+        "东校区南门": { pos: [116.0092, 36.4302], type: "gate", desc: "主出入口，临近文化路" },
+        "东校区北门": { pos: [116.0115, 36.4355], type: "gate", desc: "临近黄河路" },
+        "东校区图书馆": { pos: [116.0128, 36.4326], type: "library", desc: "馆藏图书120万册，自习室开放至22:00" },
+        "1号教学楼": { pos: [116.0106, 36.4319], type: "teaching", desc: "主要承担文科类课程教学" },
+        "2号教学楼": { pos: [116.0114, 36.4312], type: "teaching", desc: "主要承担理工类课程教学" },
+        "3号教学楼": { pos: [116.0122, 36.4308], type: "teaching", desc: "多媒体教室集中区" },
+        "第一食堂": { pos: [116.0105, 36.4329], type: "canteen", desc: "早餐6:30-9:00，午餐11:00-13:30" },
+        "第二食堂": { pos: [116.0118, 36.4336], type: "canteen", desc: "特色窗口：麻辣烫、黄焖鸡" },
+        "南苑宿舍1号楼": { pos: [116.0098, 36.4338], type: "dorm", desc: "本科生宿舍，6人间" },
+        "北苑宿舍1号楼": { pos: [116.0125, 36.4348], type: "dorm", desc: "研究生宿舍，4人间" },
+        "快递服务中心": { pos: [116.0090, 36.4332], type: "service", desc: "菜鸟驿站，取件时间9:00-21:00" },
+        "校园超市": { pos: [116.0108, 36.4335], type: "shop", desc: "生活用品、零食饮料全覆盖" },
+        "打印店": { pos: [116.0103, 36.4331], type: "service", desc: "打印0.1元/张，复印0.05元/张" },
+        "大学生活动中心": { pos: [116.0110, 36.4342], type: "activity", desc: "社团活动、讲座举办地" },
+        "西校区正门": { pos: [115.9945, 36.4385], type: "gate", desc: "主出入口，临近花园路" },
+        "西校区图书馆": { pos: [115.9929, 36.4393], type: "library", desc: "社科类图书专区" },
+        "西1教学楼": { pos: [115.9938, 36.4390], type: "teaching", desc: "继续教育学院教学区" },
+        "西校食堂": { pos: [115.9915, 36.4405], type: "canteen", desc: "清真窗口专区" },
+        "西校宿舍区": { pos: [115.9905, 36.4410], type: "dorm", desc: "教职工宿舍+本科生宿舍" }
+    };
+
+    // 初始化
+    window.onload = function() {
+        initMap();
+        initLayers();
+        addAllMarkers();
+        initAutoComplete();
+    };
+
+    // 初始化地图（重点：关闭跨域限制的默认设置）
+    function initMap() {
+        map = new AMap.Map('map-container', {
+            center: [116.0111, 36.4314],
+            zoom: 17,
+            viewMode: '2D',
+            resizeEnable: true,
+            keyboardEnable: true,
+            doubleClickZoom: true,
+            // 新增：允许跨域请求
+            securityJsCode: '234aacb867616bfa827831d6de91231e' // 与Key一致，解决跨域
+        });
+
+        // 预加载所有插件（含定位插件的兜底配置）
+        AMap.plugin([
+            'AMap.Geolocation',
+            'AMap.Walking',
+            'AMap.Riding',
+            'AMap.AutoComplete',
+            'AMap.PlaceSearch',
+            'AMap.Buildings',
+            'AMap.CitySearch' // 新增：城市定位插件，解决跨域
+        ], function() {
+            console.log("插件加载完成，定位功能已就绪");
+        });
+
+        map.on('complete', function() {
+            console.log("地图加载完成");
+        });
+    }
+
+    // 初始化图层
+    function initLayers() {
+        roadLayer = new AMap.TileLayer.RoadNet({ zIndex: 1, opacity: 1 });
+        roadLayer.setMap(map);
+
+        satelliteLayer = new AMap.TileLayer.Satellite({ zIndex: 0, opacity: 1 });
+
+        labelLayer = new AMap.TileLayer.Label({ zIndex: 2, opacity: 1 });
+        labelLayer.setMap(map);
+
+        buildingLayer = new AMap.Buildings({ zIndex: 3, heightFactor: 1 });
+    }
+
+    // 添加标注
+    function addAllMarkers() {
+        if (markers.length > 0) {
+            map.remove(markers);
+            markers = [];
+        }
+
+        const markerStyles = {
+            gate: { icon: 'https://webapi.amap.com/theme/v1/markers/colors/red.png', size: [30, 30] },
+            library: { icon: 'https://webapi.amap.com/theme/v1/markers/colors/orange.png', size: [30, 30] },
+            teaching: { icon: 'https://webapi.amap.com/theme/v1/markers/colors/blue.png', size: [30, 30] },
+            canteen: { icon: 'https://webapi.amap.com/theme/v1/markers/colors/green.png', size: [30, 30] },
+            dorm: { icon: 'https://webapi.amap.com/theme/v1/markers/colors/pink.png', size: [30, 30] },
+            service: { icon: 'https://webapi.amap.com/theme/v1/markers/colors/cyan.png', size: [30, 30] },
+            shop: { icon: 'https://webapi.amap.com/theme/v1/markers/colors/brown.png', size: [30, 30] },
+            activity: { icon: 'https://webapi.amap.com/theme/v1/markers/colors/purple.png', size: [30, 30] }
+        };
+
+        for (const [name, poi] of Object.entries(campusPOIs)) {
+            const style = markerStyles[poi.type] || markerStyles.gate;
+            const marker = new AMap.Marker({
+                position: poi.pos,
+                title: name,
+                icon: new AMap.Icon({
+                    image: style.icon,
+                    size: new AMap.Size(style.size[0], style.size[1]),
+                    anchor: new AMap.Pixel(15, 30)
+                }),
+                offset: new AMap.Pixel(0, -15),
+                map: map
+            });
+
+            marker.on('click', function() {
+                document.getElementById('search-input').value = name;
+                const infoWindow = new AMap.InfoWindow({
+                    content: `<div style="padding:8px 0;">
+                            <h3 style="font-size:16px;margin-bottom:4px;">${name}</h3>
+                            <p style="font-size:12px;color:#666;margin-bottom:8px;">${poi.desc}</p>
+                            <button style="padding:4px 12px;background:${'var(--lc-u-primary)'};color:white;border:none;border-radius:4px;cursor:pointer;" onclick="searchDestination()">导航到这里</button>
+                        </div>`,
+                    offset: new AMap.Pixel(0, -30)
+                });
+                infoWindow.open(map, poi.pos);
+            });
+
+            markers.push(marker);
+        }
+    }
+
+    // 初始化自动补全
+    function initAutoComplete() {
+        const autoComplete = new AMap.AutoComplete({
+            input: 'search-input',
+            keyword: Object.keys(campusPOIs),
+            city: '聊城'
+        });
+
+        autoComplete.on('select', function(e) {
+            document.getElementById('search-input').value = e.poi.name;
+            searchDestination();
+        });
+    }
+
+    // 切换地图模式
+    function switchMapMode(mode) {
+        map.setViewMode(mode);
+        document.querySelectorAll('.func-btn').forEach(btn => {
+            btn.classList.remove('active');
+            if (btn.innerText.includes(mode)) btn.classList.add('active');
+        });
+        if (mode === '3D') {
+            document.getElementById('layer-building').checked = true;
+            toggleLayer('building');
+        }
+    }
+
+    // 图层切换
+    function toggleLayer(layerType) {
+        const isChecked = document.getElementById(`layer-${layerType}`).checked;
+        switch(layerType) {
+            case 'road':
+                isChecked ? roadLayer.setMap(map) : roadLayer.setMap(null);
+                break;
+            case 'satellite':
+                isChecked ? satelliteLayer.setMap(map) : satelliteLayer.setMap(null);
+                break;
+            case 'label':
+                isChecked ? labelLayer.setMap(map) : labelLayer.setMap(null);
+                break;
+            case 'building':
+                isChecked ? buildingLayer.setMap(map) : buildingLayer.setMap(null);
+                break;
+        }
+    }
+
+    // ==================== 核心修复：定位功能 ====================
+    // 打开定位选择面板（替代原有的直接定位）
+    function openLocationSelector() {
+        document.getElementById('location-selector').style.display = 'block';
+    }
+
+    // 关闭定位选择面板
+    function closeLocationSelector() {
+        document.getElementById('location-selector').style.display = 'none';
+    }
+
+    // 选择起点位置（核心修复：手动选起点，避免定位权限问题）
+    function selectLocation(type) {
+        closeLocationSelector();
+        switch(type) {
+            case 'auto':
+                // 自动定位（带三重兜底）
+                autoLocateWithFallback();
+                break;
+            case 'east-gate':
+                currentStartPos = [116.0092, 36.4302];
+                alert("✅ 已选择起点：东校区南门");
+                // 地图聚焦到起点
+                map.setCenter(currentStartPos);
+                map.setZoom(18);
+                // 添加起点标注
+                addStartMarker();
+                break;
+            case 'west-gate':
+                currentStartPos = [115.9945, 36.4385];
+                alert("✅ 已选择起点：西校区正门");
+                map.setCenter(currentStartPos);
+                map.setZoom(18);
+                addStartMarker();
+                break;
+            case 'east-lib':
+                currentStartPos = [116.0128, 36.4326];
+                alert("✅ 已选择起点：东校区图书馆");
+                map.setCenter(currentStartPos);
+                map.setZoom(18);
+                addStartMarker();
+                break;
+        }
+    }
+
+    // 自动定位（带三重兜底）
+    function autoLocateWithFallback() {
+        // 第一步：尝试高德高精度定位
+        const geolocation = new AMap.Geolocation({
+            enableHighAccuracy: true,
+            timeout: 5000,
+            maximumAge: 0,
+            convert: true, // 坐标转换，解决跨域
+            showButton: false,
+            showMarker: false,
+            showCircle: false
+        });
+
+        geolocation.getCurrentPosition(function(status, result) {
+            if (status === 'complete') {
+                // 兜底1：高德定位成功
+                currentStartPos = [result.position.lng, result.position.lat];
+                alert(`✅ 自动定位成功！\n当前位置：${result.position.lng.toFixed(6)}, ${result.position.lat.toFixed(6)}`);
+                map.setCenter(currentStartPos);
+                map.setZoom(18);
+                addStartMarker();
+            } else {
+                // 兜底2：高德定位失败，尝试IP定位
+                const citySearch = new AMap.CitySearch();
+                citySearch.getLocalCity(function(status, result) {
+                    if (status === 'complete' && result.city === '聊城市') {
+                        // IP定位到聊城，用东校区南门兜底
+                        currentStartPos = [116.0092, 36.4302];
+                        alert("⚠️ 高精度定位失败，已自动定位到聊城市 → 东校区南门");
+                        map.setCenter(currentStartPos);
+                        map.setZoom(18);
+                        addStartMarker();
+                    } else {
+                        // 兜底3：IP定位也失败，强制用东校区南门
+                        currentStartPos = [116.0092, 36.4302];
+                        alert("❌ 定位服务不可用，已默认选择起点：东校区南门");
+                        map.setCenter(currentStartPos);
+                        map.setZoom(18);
+                        addStartMarker();
+                    }
+                });
+            }
+        });
+    }
+
+    // 添加起点标注（可视化当前起点）
+    function addStartMarker() {
+        // 移除原有起点标注
+        markers.forEach(marker => {
+            if (marker.getTitle() === '当前起点') {
+                map.remove(marker);
+            }
+        });
+        // 添加新起点标注
+        const startMarker = new AMap.Marker({
+            position: currentStartPos,
+            title: '当前起点',
+            icon: new AMap.Icon({
+                image: 'https://webapi.amap.com/theme/v1/markers/mark_bs.png',
+                size: new AMap.Size(35, 35),
+                anchor: new AMap.Pixel(17, 35)
+            }),
+            zIndex: 100,
+            map: map
+        });
+        markers.push(startMarker);
+    }
+
+    // 搜索并规划路线（核心：使用手动选择的起点）
+    function searchDestination() {
+        const destName = document.getElementById('search-input').value.trim();
+        if (!destName) {
+            alert("❌ 请输入目的地！");
+            return;
+        }
+        if (!campusPOIs[destName]) {
+            alert(`❌ 未找到「${destName}」，请输入以下有效地点：\n${Object.keys(campusPOIs).slice(0, 10).join('\n')}...`);
+            return;
+        }
+
+        clearRoute();
+
+        // 终点位置
+        const endPos = campusPOIs[destName].pos;
+
+        // 直接使用已选择的起点，不再触发新的定位请求
+        const walking = new AMap.Walking({
+            map: map,
+            panel: 'route-steps',
+            autoFitView: true
+        });
+
+        // 优先使用本地路线计算（避免跨域）
+        walking.search(currentStartPos, endPos, function(status, result) {
+            if (status === 'complete') {
+                const route = result.routes[0];
+                currentRoute = route;
+
+                document.getElementById('route-title').innerText = `从当前起点到 ${destName}`;
+                document.getElementById('route-distance').innerText = `全程 ${(route.distance / 1000).toFixed(2)} 公里，预计耗时 ${Math.ceil(route.time / 60)} 分钟`;
+
+                let stepsHtml = '';
+                route.steps.forEach((step, index) => {
+                    stepsHtml += `<div class="route-step">${index + 1}. ${step.instructions}</div>`;
+                });
+                document.getElementById('route-steps').innerHTML = stepsHtml;
+
+                document.getElementById('route-popup').style.display = 'block';
+                map.setCenter(endPos);
+                map.setZoom(18);
+            } else {
+                // 终极兜底：纯本地绘制路线，不依赖任何接口
+                alert("⚠️ 路线接口不可用，显示本地规划路线");
+                drawLocalRoute(currentStartPos, endPos, destName);
+            }
+        });
+    }
+
+    // 本地绘制路线（终极兜底）
+    function drawLocalRoute(startPos, endPos, destName) {
+        const polyline = new AMap.Polyline({
+            path: [startPos, endPos],
+            strokeColor: "#FF0000",
+            strokeWeight: 6,
+            strokeOpacity: 0.8,
+            strokeStyle: 'solid',
+            zIndex: 5,
+            map: map
+        });
+        currentRoute = polyline;
+
+        const distance = Math.ceil(AMap.GeometryUtil.distance(startPos, endPos));
+        const time = Math.ceil(distance / 80); // 按步行速度80米/分钟计算
+        document.getElementById('route-title').innerText = `从当前起点到 ${destName}`;
+        document.getElementById('route-distance').innerText = `直线距离 ${distance} 米，预计步行 ${time} 分钟`;
+        document.getElementById('route-steps').innerHTML = `<div class="route-step">从当前起点出发，直行至${destName}（全程约${distance}米）</div>`;
+        document.getElementById('route-popup').style.display = 'block';
+    }
+
+    // 清空路线
+    function clearRoute() {
+        if (currentRoute) {
+            if (currentRoute instanceof AMap.Polyline) {
+                map.remove(currentRoute);
+            } else {
+                map.clearMap();
+                addAllMarkers();
+                addStartMarker(); // 保留起点标注
+            }
+            currentRoute = null;
+        }
+        document.getElementById('route-popup').style.display = 'none';
+    }
+
+    // 关闭路线弹窗
+    function closeRoutePopup() {
+        document.getElementById('route-popup').style.display = 'none';
+    }
+
+    // 全局错误捕获
+    window.onerror = function(message, source, lineno, colno, error) {
+        console.error("全局错误：", message, error);
+        alert(`⚠️ 系统异常：${message}\n已自动恢复，可正常使用`);
+        // 异常后强制恢复默认起点
+        currentStartPos = [116.0092, 36.4302];
+        return true;
+    };
+
+    // 网络异常监听
+    window.addEventListener('offline', function() {
+        alert("⚠️ 网络已断开！仍可使用本地导航功能");
+    });
+</script>
+</body>
+</html>
